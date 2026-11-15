@@ -1,0 +1,103 @@
+name: Build GeoSite CN+GFW
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Build geosite-slim
+        run: |
+          go mod download
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o geosite-slim ./cmd/geosite-slim
+          ls -lh geosite-slim
+
+      - name: Download GeoSite.dat
+        run: |
+          set -eu
+          # 按优先级尝试多个源；必须能被 mihomo 格式解析
+          urls="
+          https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat
+          https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat
+          https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/release/geosite.dat
+          https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/geosite.dat
+          "
+          ok=0
+          for url in $urls; do
+            echo "== trying $url"
+            if ! curl -fsSL --retry 2 --max-time 180 -o geosite-full.dat "$url"; then
+              echo "  download failed"
+              continue
+            fi
+            sz=$(stat -c%s geosite-full.dat || echo 0)
+            echo "  size: $sz"
+            [ "$sz" -lt 1000000 ] && { echo "  too small"; continue; }
+            if ./geosite-slim geosite-full.dat /tmp/_probe.dat CN GFW 2>/dev/null; then
+              echo "  format OK"
+              ok=1
+              break
+            else
+              echo "  format mismatch, skip"
+            fi
+          done
+          [ "$ok" = "1" ] || { echo "all sources failed"; exit 1; }
+          ls -lh geosite-full.dat
+
+      - name: Extract CN + GFW
+        run: |
+          ./geosite-slim geosite-full.dat GeoSite-cn-gfw.dat CN GFW
+          ls -lh GeoSite-cn-gfw.dat
+
+      - name: Checksums and metadata
+        run: |
+          sha256sum GeoSite-cn-gfw.dat > GeoSite-cn-gfw.dat.sha256sum
+          cat GeoSite-cn-gfw.dat.sha256sum
+          {
+            echo "## GeoSite CN + GFW"
+            echo ""
+            echo "| item | value |"
+            echo "|---|---|"
+            echo "| built | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |"
+            echo "| categories | CN, GFW |"
+            echo "| size | $(stat -c%s GeoSite-cn-gfw.dat) bytes |"
+            echo "| sha256 | $(cut -d' ' -f1 GeoSite-cn-gfw.dat.sha256sum) |"
+            echo "| source | MetaCubeX/meta-rules-dat or Loyalsoldier/v2ray-rules-dat |"
+            echo "| run | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |"
+            echo ""
+            echo "### Usage"
+            echo '```bash'
+            echo "wget -O /etc/openclash/GeoSite.dat \\"
+            echo "  ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/GeoSite-cn-gfw.dat"
+            echo "/etc/init.d/openclash restart"
+            echo '```'
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          sleep 2
+          gh release create latest \
+            --title "GeoSite CN+GFW (rolling)" \
+            --notes-file release-notes.md \
+            GeoSite-cn-gfw.dat GeoSite-cn-gfw.dat.sha256sum
