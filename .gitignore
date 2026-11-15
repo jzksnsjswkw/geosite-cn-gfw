@@ -1,5 +1,7 @@
-geosite-slim
-geosite-full.dat
-GeoSite-cn-gfw.dat
-*.sha256sum
-build-info.txt
+# 构建产物（仅在仓库根目录）
+/geosite-slim
+/geosite-full.dat
+/GeoSite-cn-gfw.dat
+/*.sha256sum
+/build-info.txt
+/release-notes.md
