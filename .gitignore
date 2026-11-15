@@ -1,0 +1,5 @@
+geosite-slim
+geosite-full.dat
+GeoSite-cn-gfw.dat
+*.sha256sum
+build-info.txt
